@@ -37,6 +37,7 @@ describe('Tasks API', () => {
         status: 'pending',
         createdAt: expect.any(String),
         updatedAt: expect.any(String),
+        completedAt: null,
       });
       expect(res.headers.location).toBe(`/tasks/${res.body.data.id}`);
     });

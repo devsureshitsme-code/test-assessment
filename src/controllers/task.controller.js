@@ -13,5 +13,15 @@ export function createTaskController(taskService) {
       const task = taskService.getById(req.validated.params.id);
       res.json({ data: task });
     },
+
+    update(req, res) {
+      const task = taskService.update(req.validated.params.id, req.validated.body);
+      res.json({ data: task });
+    },
+
+    updateStatus(req, res) {
+      const task = taskService.updateStatus(req.validated.params.id, req.validated.body.status);
+      res.json({ data: task });
+    },
   };
 }
