@@ -11,6 +11,8 @@ npm start          # http://localhost:3000 (override with PORT=xxxx)
 npm test           # Vitest + Supertest
 ```
 
+CI (`.github/workflows/test.yml`) runs `npm ci && npm test` on Node 22 and 24 for every pull request and for every push to `main`.
+
 | Variable   | Default | Purpose                                                                 |
 |------------|---------|-------------------------------------------------------------------------|
 | `PORT`     | `3000`  | HTTP port                                                               |
@@ -26,6 +28,7 @@ src/
   controllers/              # HTTP request/response handling
   services/task.service.js  # business logic + in-memory store
   domain/taskStatus.js      # task status state machine (transition rules)
+  domain/taskQuery.js       # pure filter / sort / paginate functions for listing
   validation/               # Zod schemas
   middleware/
     validate.js             # generic Zod request validation
@@ -90,11 +93,86 @@ The body must be a JSON object sent with `Content-Type: application/json` and mu
 
 ### `GET /api/tasks`: list tasks
 
+Returns one page of tasks. You can filter by status and priority and sort by an allowlisted field.
+
+| Parameter  | Type / allowed values                                                       | Default     |
+|------------|-----------------------------------------------------------------------------|-------------|
+| `status`   | `pending`, `in_progress`, `completed`                                       | (all)       |
+| `priority` | `low`, `medium`, `high`                                                     | (all)       |
+| `page`     | positive integer (`1`, `2`, …)                                              | `1`         |
+| `limit`    | positive integer, at most `100`                                             | `10`        |
+| `sortBy`   | `createdAt`, `updatedAt`, `completedAt`, `title`, `priority`, `status`      | `createdAt` |
+| `order`    | `asc`, `desc`                                                               | `asc`       |
+
+**Example queries**
+
 ```bash
-curl http://localhost:3000/api/tasks
+# First 10 tasks, oldest first
+curl 'http://localhost:3000/api/tasks'
+
+# Page 2, 5 per page
+curl 'http://localhost:3000/api/tasks?page=2&limit=5'
+
+# High-priority tasks that are still pending
+curl 'http://localhost:3000/api/tasks?status=pending&priority=high'
+
+# Most important first (high → medium → low → no priority)
+curl 'http://localhost:3000/api/tasks?sortBy=priority&order=desc'
+
+# Most recently completed tasks
+curl 'http://localhost:3000/api/tasks?status=completed&sortBy=completedAt&order=desc&limit=20'
 ```
 
-**200 OK**: `{ "data": [ { ...task }, ... ] }`
+**200 OK**
+
+```json
+{
+  "data": [ { "id": "…", "title": "Review PR", "priority": "high", "status": "pending", "…": "…" } ],
+  "pagination": { "page": 1, "limit": 10, "totalItems": 1, "totalPages": 1 }
+}
+```
+
+**How the parameters combine**
+
+- **Filters first, then sort, then paginate.** `totalItems` and `totalPages` count the *filtered* tasks, not the whole collection. Multiple filters combine with AND.
+- **Pages never overlap.** Page `n` holds items `(n-1)·limit + 1` through `n·limit` of the sorted result, and the last page may be shorter than `limit`.
+- **Out-of-range pages.** A `page` beyond `totalPages` returns `200` with `"data": []` and accurate totals. An empty result reports `totalItems: 0, totalPages: 0`.
+- **Sort order.**
+  - `title` ignores case and orders numbers naturally (`Task 2` before `Task 10`).
+  - `priority` sorts by rank (`low < medium < high`), not alphabetically.
+  - `status` follows the lifecycle (`pending < in_progress < completed`).
+- **Missing values** (a task with no `priority`, or with no `completedAt` yet) always sort **last**, whichever direction you choose.
+- **Sorting is deterministic.** Ties are broken by `createdAt` and then by creation order, both in the requested direction. Repeating the same request returns the same page, and pages stay consistent with one another.
+
+**Validation (400 `VALIDATION_ERROR`, `location: "query"`)**
+
+| Input                                                    | Example                         |
+|----------------------------------------------------------|---------------------------------|
+| `page` or `limit` that is not a plain positive integer   | `page=0`, `limit=-5`, `page=1.5`, `page=1e2`, `page=01`, `limit=` |
+| `limit` greater than 100                                 | `limit=101` → `limit must not exceed 100` |
+| a value outside the allowed list (case-sensitive)        | `status=done`, `priority=urgent`, `order=DESC` |
+| a sort field that isn't on the allowlist                 | `sortBy=id`, `sortBy=description`, `sortBy=__proto__` |
+| a parameter given more than once                         | `status=pending&status=completed` |
+| an unknown parameter                                     | `search=x`, `offset=10` → `Unknown query parameter(s): …` |
+
+Every invalid parameter is reported in a single response:
+
+```bash
+curl 'http://localhost:3000/api/tasks?limit=500&sortBy=id'
+```
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Request validation failed",
+    "details": [
+      { "location": "query", "field": "limit", "message": "limit must not exceed 100" },
+      { "location": "query", "field": "sortBy", "message": "sortBy must be one of: createdAt, updatedAt, completedAt, title, priority, status" }
+    ]
+  }
+}
+```
 
 ### `GET /api/tasks/:id`: get one task
 
@@ -237,11 +315,11 @@ Every error uses the same shape. The centralized middleware in `src/middleware/e
 }
 ```
 
-On validation errors, `details` is an array that lists **every** invalid field, not just the first. `location` is `body` or `params`. `field` is `null` when the problem concerns the whole body (for example, the body is not a JSON object). On `INVALID_STATUS_TRANSITION` errors, `details` is an object describing the conflict (see [Task lifecycle](#task-lifecycle)). Other errors have no `details`.
+On validation errors, `details` is an array that lists **every** invalid field, not just the first. `location` is `body`, `params` or `query`. `field` is `null` when the problem concerns the whole body (for example, the body is not a JSON object). On `INVALID_STATUS_TRANSITION` errors, `details` is an object describing the conflict (see [Task lifecycle](#task-lifecycle)). Other errors have no `details`.
 
 | Status | `code`                   | When                                                         |
 |--------|--------------------------|--------------------------------------------------------------|
-| 400    | `VALIDATION_ERROR`       | Missing or invalid fields, unknown fields, invalid task ID, missing or non-object body |
+| 400    | `VALIDATION_ERROR`       | Missing or invalid fields, unknown fields, invalid task ID, missing or non-object body, invalid or unknown query parameters |
 | 400    | `INVALID_JSON`           | The request body is not valid JSON                           |
 | 404    | `NOT_FOUND`              | The task does not exist, or the route is unknown             |
 | 409    | `INVALID_STATUS_TRANSITION` | The requested status change is not allowed from the task's current status |

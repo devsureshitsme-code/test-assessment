@@ -5,8 +5,8 @@ export function createTaskController(taskService) {
       res.status(201).location(`${req.baseUrl}/${task.id}`).json({ data: task });
     },
 
-    list(_req, res) {
-      res.json({ data: taskService.list() });
+    list(req, res) {
+      res.json(taskService.list(req.validated.query));
     },
 
     getById(req, res) {

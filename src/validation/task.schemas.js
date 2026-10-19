@@ -1,9 +1,19 @@
 import { z } from 'zod';
+import {
+  DEFAULT_LIMIT,
+  DEFAULT_ORDER,
+  DEFAULT_PAGE,
+  DEFAULT_SORT_BY,
+  MAX_LIMIT,
+  SORTABLE_FIELDS,
+  SORT_ORDERS,
+  TASK_PRIORITIES,
+} from '../domain/taskQuery.js';
 import { TASK_STATUSES } from '../domain/taskStatus.js';
 
+export { TASK_PRIORITIES };
 export const TITLE_MAX_LENGTH = 100;
 export const DESCRIPTION_MAX_LENGTH = 1000;
-export const TASK_PRIORITIES = ['low', 'medium', 'high'];
 
 const taskFields = {
   title: z
@@ -71,3 +81,55 @@ export const updateTaskStatusSchema = strictBody({
 export const taskIdParamsSchema = z.object({
   id: z.uuid({ error: 'Task ID must be a valid UUID' }),
 });
+
+/**
+ * A single query-string value. Express parses repeated keys (`?a=1&a=2`) into
+ * arrays; those are rejected rather than silently picking one value.
+ */
+function singleQueryValue(name) {
+  return z.string({
+    error: (issue) =>
+      Array.isArray(issue.input) ? `${name} must be provided only once` : `${name} must be a string`,
+  });
+}
+
+function enumQueryParam(name, values) {
+  return singleQueryValue(name).pipe(
+    z.enum(values, { error: `${name} must be one of: ${values.join(', ')}` }),
+  );
+}
+
+/**
+ * Positive integer written as plain digits. A regex is used instead of
+ * z.coerce.number() because Number() accepts '', ' 1', '1e1', '0x10' and '1.0'.
+ */
+function positiveIntQueryParam(name, { max } = {}) {
+  const message = `${name} must be a positive integer`;
+  let schema = singleQueryValue(name)
+    .regex(/^[1-9][0-9]*$/, message)
+    .transform(Number)
+    .pipe(z.number().max(Number.MAX_SAFE_INTEGER, `${name} is too large`));
+  if (max !== undefined) {
+    schema = schema.pipe(z.number().max(max, `${name} must not exceed ${max}`));
+  }
+  return schema;
+}
+
+export const listTasksQuerySchema = z
+  .object(
+    {
+      status: enumQueryParam('status', TASK_STATUSES).optional(),
+      priority: enumQueryParam('priority', TASK_PRIORITIES).optional(),
+      page: positiveIntQueryParam('page').default(DEFAULT_PAGE),
+      limit: positiveIntQueryParam('limit', { max: MAX_LIMIT }).default(DEFAULT_LIMIT),
+      sortBy: enumQueryParam('sortBy', SORTABLE_FIELDS).default(DEFAULT_SORT_BY),
+      order: enumQueryParam('order', SORT_ORDERS).default(DEFAULT_ORDER),
+    },
+    {
+      error: (issue) =>
+        issue.code === 'unrecognized_keys'
+          ? `Unknown query parameter(s): ${issue.keys.join(', ')}`
+          : 'Invalid query string',
+    },
+  )
+  .strict();

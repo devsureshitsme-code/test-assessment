@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { filterTasks, paginate, sortTasks } from '../domain/taskQuery.js';
 import { INITIAL_STATUS, assertTransition } from '../domain/taskStatus.js';
 import { NotFoundError } from '../errors/AppError.js';
 
@@ -41,8 +42,15 @@ export function createTaskService({ now = () => new Date() } = {}) {
       });
     },
 
-    list() {
-      return [...tasks.values()].map((task) => ({ ...task }));
+    /**
+     * Filters, then sorts, then paginates. Each step produces a new array, so
+     * the store is never reordered or modified; returned tasks are copies.
+     */
+    list({ status, priority, sortBy, order, page, limit } = {}) {
+      const filtered = filterTasks([...tasks.values()], { status, priority });
+      const sorted = sortTasks(filtered, { sortBy, order });
+      const result = paginate(sorted, { page, limit });
+      return { ...result, data: result.data.map((task) => ({ ...task })) };
     },
 
     getById(id) {
