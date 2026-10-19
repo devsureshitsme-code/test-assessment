@@ -24,3 +24,10 @@ export class NotFoundError extends AppError {
     super(404, 'NOT_FOUND', message);
   }
 }
+
+/** The request is well-formed but conflicts with the resource's current state. */
+export class ConflictError extends AppError {
+  constructor(code = 'CONFLICT', message = 'Request conflicts with the current resource state', details) {
+    super(409, code, message, details);
+  }
+}
