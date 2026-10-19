@@ -3,6 +3,7 @@ import { createTaskController } from '../controllers/task.controller.js';
 import { validate } from '../middleware/validate.js';
 import {
   createTaskSchema,
+  listTasksQuerySchema,
   taskIdParamsSchema,
   updateTaskSchema,
   updateTaskStatusSchema,
@@ -13,7 +14,7 @@ export function createTaskRouter(taskService) {
   const controller = createTaskController(taskService);
 
   router.post('/', validate({ body: createTaskSchema }), controller.create);
-  router.get('/', controller.list);
+  router.get('/', validate({ query: listTasksQuerySchema }), controller.list);
   router.get('/:id', validate({ params: taskIdParamsSchema }), controller.getById);
   router.patch(
     '/:id',

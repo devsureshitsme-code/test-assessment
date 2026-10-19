@@ -271,7 +271,10 @@ describe('Tasks API', () => {
     it('returns an empty list initially', async () => {
       const res = await request(app).get('/tasks');
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ data: [] });
+      expect(res.body).toEqual({
+        data: [],
+        pagination: { page: 1, limit: 10, totalItems: 0, totalPages: 0 },
+      });
     });
 
     it('returns created tasks', async () => {
